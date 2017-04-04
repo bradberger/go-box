@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"golang.org/x/net/context"
@@ -29,7 +30,7 @@ func (a *API) SetEndpoint(endpointURL string) {
 
 // Post sends a HTTP Post request to the given url with the reqData encoded as XML in the body, and returns the result
 // decoded into respData.
-func (a *API) Post(ctx context.Context, uri string, reqData interface{}, respData interface{}) (*ErrorCodeResponse, error) {
+func (a *API) PostJSON(ctx context.Context, uri string, reqData interface{}, respData interface{}) (*ErrorCodeResponse, error) {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(reqData); err != nil {
 		return nil, err
@@ -39,6 +40,40 @@ func (a *API) Post(ctx context.Context, uri string, reqData interface{}, respDat
 		return nil, err
 	}
 	return a.do(ctx, req, respData)
+}
+
+type Token struct {
+	AccessToken  string        `json:"access_token"`
+	ExpiresIn    int           `json:"expires_in"`
+	TokenType    string        `json:"string"`
+	RestrictedTo []interface{} `json:"restricted_to"`
+}
+
+// JWT gets a JWT token
+func (a *API) JWT(ctx context.Context) (*Token, error) {
+
+	var t Token
+	form := url.Values{}
+	form.Add("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+	form.Add("assertion", JWTToken())
+	form.Add("client_id", ClientID)
+	form.Add("client_secret", ClientSecret)
+	req, err := http.NewRequest("POST", "https://api.box.com/oauth2/token", bytes.NewBufferString(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := a.do(ctx, req, &t); err != nil {
+		log.Println(form)
+		return nil, err
+	}
+
+	return &t, nil
+}
+
+// SetToken sets the token to be used on future requests
+func (a *API) SetToken(accessToken string) {
+	a.authToken = accessToken
 }
 
 func (a *API) Put(ctx context.Context, uri string, reqData interface{}, respData interface{}) (*ErrorCodeResponse, error) {
@@ -63,8 +98,9 @@ func (a *API) Get(ctx context.Context, uri string, respData interface{}) (*Error
 }
 
 func (a *API) do(ctx context.Context, req *http.Request, respData interface{}) (*ErrorCodeResponse, error) {
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", a.authToken))
-	log.Printf("Request: %+v", req)
+
+	//<base64URLencoded header>.<base64URLencoded claims>.<base64URLencoded signature>
+	req.Header.Add("Authorization", "Bearer "+a.authToken)
 	resp, err := getHTTPClient(ctx).Do(req)
 	if err != nil {
 		return nil, err
@@ -84,12 +120,12 @@ func (a *API) do(ctx context.Context, req *http.Request, respData interface{}) (
 
 	if resp.StatusCode >= 400 {
 		var e ErrorCodeResponse
-		if err := json.NewDecoder(resp.Body).Decode(&e); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&e); err == nil {
 			e.Message = http.StatusText(resp.StatusCode)
 			e.Status = resp.StatusCode
 			e.Code = http.StatusText(resp.StatusCode)
 		}
-		return &e, fmt.Errorf(e.Message)
+		return &e, fmt.Errorf("error: %v", e)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(respData); err != nil {
 		return nil, err

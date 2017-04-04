@@ -93,7 +93,7 @@ type Permissions struct {
 func (a *API) CreateFolder(ctx context.Context, folderName string, parentID string) (*FolderDetails, *ErrorCodeResponse, error) {
 	var f FolderDetails
 	fr := &CreateFolderRequest{Name: folderName, ParentFolder: ParentFolder{ID: parentID}}
-	if resp, err := a.Post(ctx, "/folders", fr, &f); err != nil {
+	if resp, err := a.PostJSON(ctx, "/folders", fr, &f); err != nil {
 		log.Printf("Error: %+v", resp)
 		return nil, resp, err
 	}
